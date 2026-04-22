@@ -11,11 +11,12 @@ import (
 // Config holds the application configuration
 type Config struct {
 	// Server settings
-	ServerHost string
-	ServerPort string
+	ServerHost    string
+	ServerPort    string
 	MaxUploadSize int64 // Maximum upload file size in bytes (default: 100MB)
 
 	// LLM settings
+	LLMProvider    string // "openai", "ollama", "gemini"
 	OpenAIAPIKey   string
 	OpenAIBaseURL  string
 	OpenAIModel    string
@@ -26,12 +27,15 @@ type Config struct {
 	OllamaModel    string
 
 	// Image generation settings
-	ImageProvider    string // "gemini", "glm", "zimage"
+	ImageProvider    string // "gemini", "glm", "zimage", "qwen"
 	GLMAPIKey        string
 	GLMImageModel    string
 	GeminiImageModel string
 	ZImageAPIKey     string
 	ZImageModel      string
+	QwenAPIKey       string
+	QwenImageModel   string
+	QwenBaseURL      string
 
 	// Vector store settings
 	VectorStoreType string // "memory", "supabase", "pgvector", "redis", "sqlite"
@@ -61,7 +65,7 @@ type Config struct {
 
 	// Audio transcription
 	EnableVoskTranscriber bool
-	VoskModelPath        string // Path to vosk model directory
+	VoskModelPath         string // Path to vosk model directory
 
 	// Demo settings
 	AllowMultipleNotesOfSameType bool
@@ -84,11 +88,11 @@ type Config struct {
 	GoogleRedirectURL  string
 
 	// Test Mode
-	EnableTestMode     bool
-	TestUserID         string
-	TestUserName       string
-	TestUserEmail      string
-	TestUserAvatar     string
+	EnableTestMode bool
+	TestUserID     string
+	TestUserName   string
+	TestUserEmail  string
+	TestUserAvatar string
 }
 
 // loadEnv loads .env file if it exists (ignoring errors if file not found)
@@ -109,6 +113,7 @@ func LoadConfig() Config {
 		ServerHost:                   getEnv("SERVER_HOST", "0.0.0.0"),
 		ServerPort:                   getEnv("SERVER_PORT", "8080"),
 		MaxUploadSize:                getEnvInt64("MAX_UPLOAD_SIZE", 200*1024*1024), // 200MB default
+		LLMProvider:                  getEnv("LLM_PROVIDER", ""),
 		OpenAIAPIKey:                 getEnv("OPENAI_API_KEY", ""),
 		OpenAIBaseURL:                getEnv("OPENAI_BASE_URL", ""),
 		OpenAIModel:                  getEnv("OPENAI_MODEL", "gpt-4o-mini"),
@@ -123,6 +128,9 @@ func LoadConfig() Config {
 		GeminiImageModel:             getEnv("GEMINI_IMAGE_MODEL", "gemini-3.1-flash-image-preview"),
 		ZImageAPIKey:                 getEnv("ZIMAGE_API_KEY", ""),
 		ZImageModel:                  getEnv("ZIMAGE_MODEL", "z-image-turbo"),
+		QwenAPIKey:                   getEnv("QWEN_API_KEY", ""),
+		QwenImageModel:               getEnv("QWEN_IMAGE_MODEL", "qwen-image"),
+		QwenBaseURL:                  getEnv("QWEN_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1/images/generations"),
 		VectorStoreType:              getEnv("VECTOR_STORE_TYPE", "sqlite"),
 		SupabaseURL:                  getEnv("SUPABASE_URL", ""),
 		SupabaseKey:                  getEnv("SUPABASE_KEY", ""),
@@ -155,17 +163,21 @@ func LoadConfig() Config {
 		GoogleClientSecret: getEnv("GOOGLE_CLIENT_SECRET", ""),
 		GoogleRedirectURL:  getEnv("GOOGLE_REDIRECT_URL", ""),
 
-		EnableTestMode:     getEnvBool("ENABLE_TEST_MODE", false),
-		TestUserID:         getEnv("TEST_USER_ID", "test-user-123"),
-		TestUserName:       getEnv("TEST_USER_NAME", "测试用户"),
-		TestUserEmail:      getEnv("TEST_USER_EMAIL", "test@example.com"),
-		TestUserAvatar:     getEnv("TEST_USER_AVATAR", ""),
+		EnableTestMode: getEnvBool("ENABLE_TEST_MODE", false),
+		TestUserID:     getEnv("TEST_USER_ID", "test-user-123"),
+		TestUserName:   getEnv("TEST_USER_NAME", "测试用户"),
+		TestUserEmail:  getEnv("TEST_USER_EMAIL", "test@example.com"),
+		TestUserAvatar: getEnv("TEST_USER_AVATAR", ""),
 	}
 
-	// Auto-detect provider from base URL or model name
-	if cfg.OpenAIBaseURL == "" && cfg.OpenAIModel != "" {
-		if contains(cfg.OpenAIModel, "ollama") || contains(cfg.OpenAIModel, "llama") {
-			cfg.OpenAIBaseURL = cfg.OllamaBaseURL
+	// Auto-detect provider from LLM_PROVIDER, or fall back to base URL/model name heuristics
+	if cfg.LLMProvider == "" {
+		if cfg.OpenAIBaseURL != "" && contains(cfg.OpenAIBaseURL, "11434") {
+			cfg.LLMProvider = "ollama"
+		} else if cfg.OpenAIBaseURL != "" && contains(cfg.OpenAIBaseURL, "gemini") {
+			cfg.LLMProvider = "gemini"
+		} else if cfg.OpenAIBaseURL != "" || cfg.OpenAIAPIKey != "" {
+			cfg.LLMProvider = "openai"
 		}
 	}
 
@@ -174,12 +186,12 @@ func LoadConfig() Config {
 
 // ValidateConfig validates the configuration
 func ValidateConfig(cfg Config) error {
-	// Check if at least one LLM provider is configured
-	hasOpenAI := cfg.OpenAIAPIKey != ""
-	hasOllama := cfg.OpenAIBaseURL != "" && contains(cfg.OpenAIBaseURL, "11434")
+	hasOpenAI := cfg.OpenAIAPIKey != "" || (cfg.OpenAIBaseURL != "" && cfg.LLMProvider == "openai")
+	hasOllama := cfg.LLMProvider == "ollama" || (cfg.OpenAIBaseURL != "" && contains(cfg.OpenAIBaseURL, "11434"))
+	hasGemini := cfg.LLMProvider == "gemini" || cfg.GoogleAPIKey != ""
 
-	if !hasOpenAI && !hasOllama {
-		return fmt.Errorf("either OPENAI_API_KEY or OLLAMA_BASE_URL must be set")
+	if !hasOpenAI && !hasOllama && !hasGemini {
+		return fmt.Errorf("either OPENAI_API_KEY, LLM_PROVIDER=ollama, or GOOGLE_API_KEY must be set")
 	}
 
 	// Validate vector store configuration
@@ -267,15 +279,24 @@ func (c *Config) GetBaseURL() string {
 
 // IsOllama returns true if using Ollama as the LLM provider
 func (c *Config) IsOllama() bool {
-	return c.OpenAIBaseURL != "" && contains(c.OpenAIBaseURL, "11434")
+	return c.LLMProvider == "ollama" || (c.OpenAIBaseURL != "" && contains(c.OpenAIBaseURL, "11434"))
+}
+
+// IsGemini returns true if using Gemini as the LLM provider
+func (c *Config) IsGemini() bool {
+	return c.LLMProvider == "gemini" || c.GoogleAPIKey != ""
+}
+
+// IsOpenAI returns true if using OpenAI as the LLM provider
+func (c *Config) IsOpenAI() bool {
+	return c.LLMProvider == "openai" || (c.LLMProvider == "" && c.OpenAIAPIKey != "")
 }
 
 // SupportsFunctionCalling returns true if the configured model supports function calling
 func (c *Config) SupportsFunctionCalling() bool {
 	if c.IsOllama() {
-		return true // Most Ollama models support tool calling now
+		return true
 	}
-	// OpenAI models that support function calling
 	supportingModels := []string{"gpt-4", "gpt-3.5-turbo"}
 	for _, model := range supportingModels {
 		if contains(c.OpenAIModel, model) {

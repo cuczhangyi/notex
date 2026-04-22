@@ -34,7 +34,7 @@ type Server struct {
 	// Track which notebooks have been loaded into vector store
 	loadedNotebooks map[string]bool
 	vectorMutex     sync.RWMutex
-	memoryManager *MemoryManager
+	memoryManager   *MemoryManager
 }
 
 // NewServer creates a new server
@@ -793,7 +793,6 @@ func (s *Server) handleUpload(c *gin.Context) {
 	c.JSON(201, source)
 }
 
-
 // Note handlers
 
 func (s *Server) handleListNotes(c *gin.Context) {
@@ -944,8 +943,15 @@ func (s *Server) handleTransform(c *gin.Context) {
 	// Generate transformation
 	response, err := s.agent.GenerateTransformation(ctx, &req, sources)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: fmt.Sprintf("Generation failed: %v", err)})
-		return
+		// In test mode, fallback to deterministic mock content when provider auth fails.
+		// This keeps local API debugging unblocked without changing production behavior.
+		if s.cfg.EnableTestMode && strings.Contains(err.Error(), "status code: 401") {
+			golog.Warnf("LLM auth failed in test mode, using mock transformation: %v", err)
+			response = buildMockTransformationResponse(&req, sources)
+		} else {
+			c.JSON(http.StatusInternalServerError, ErrorResponse{Error: fmt.Sprintf("Generation failed: %v", err)})
+			return
+		}
 	}
 
 	metadata := map[string]interface{}{
@@ -1063,6 +1069,41 @@ func (s *Server) handleTransform(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, note)
+}
+
+// buildMockTransformationResponse builds a deterministic mock response for local debug.
+func buildMockTransformationResponse(req *TransformationRequest, sources []Source) *TransformationResponse {
+	sourceSummaries := make([]SourceSummary, 0, len(sources))
+	sourceNames := make([]string, 0, len(sources))
+	for _, src := range sources {
+		sourceSummaries = append(sourceSummaries, SourceSummary{
+			ID:   src.ID,
+			Name: src.Name,
+			Type: src.Type,
+		})
+		sourceNames = append(sourceNames, src.Name)
+	}
+
+	content := fmt.Sprintf(
+		"# 本地调试生成内容\n\n- 类型: %s\n- 长度: %s\n- 格式: %s\n- 来源数量: %d\n- 来源: %s\n\n> 当前处于测试模式且模型鉴权失败（401），已返回调试内容。",
+		req.Type,
+		req.Length,
+		req.Format,
+		len(sources),
+		strings.Join(sourceNames, ", "),
+	)
+
+	return &TransformationResponse{
+		Type:      req.Type,
+		Content:   content,
+		Sources:   sourceSummaries,
+		CreatedAt: time.Now(),
+		Metadata: map[string]interface{}{
+			"mock":   true,
+			"length": req.Length,
+			"format": req.Format,
+		},
+	}
 }
 
 func getTitleForType(t string) string {
@@ -1512,6 +1553,8 @@ func (s *Server) getImageModelForProvider() string {
 		return s.cfg.GLMImageModel
 	case "zimage":
 		return s.cfg.ZImageModel
+	case "qwen":
+		return s.cfg.QwenImageModel
 	case "gemini":
 		return s.cfg.GeminiImageModel
 	default:
@@ -1707,7 +1750,7 @@ var processingQueueMutex sync.Mutex
 func GetProcessingQueue() *ProcessingQueue {
 	processingQueueMutex.Lock()
 	defer processingQueueMutex.Unlock()
-	
+
 	if processingQueue == nil {
 		processingQueue = &ProcessingQueue{
 			tasks: make(chan ProcessingTask, 100),

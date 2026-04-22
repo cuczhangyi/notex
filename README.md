@@ -280,6 +280,13 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 Apache License 2.0 - see [LICENSE](./LICENSE) for details.
 
+## 🧭 System Analysis Docs
+
+- [Project Function and Flow Report](./docs/system/项目功能与流程梳理报告.md)
+- [System Sequence Diagram (draw.io XML)](./docs/system/system_sequence.drawio.xml)
+- [Upload Dataflow Diagram (draw.io XML)](./docs/system/dataflow_upload.drawio.xml)
+- [Issue List (CSV)](./docs/system/issue_list.csv)
+
 ## 🙏 Acknowledgments
 
 - Inspired by [Google's NotebookLM](https://notebooklm.google.com/)
