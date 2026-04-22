@@ -84,16 +84,6 @@ func (s *Store) initSchema() error {
 		return err
 	}
 
-	// Migration: Add status tracking columns to sources table
-	if err := s.migrateSourceStatusColumns(); err != nil {
-		return err
-	}
-
-	// Migration: Add hash_id column to users table for existing databases
-	if err := s.migrateAddHashIDColumn(); err != nil {
-		return err
-	}
-
 	// Check if user_id column exists in notebooks table (migration)
 	var count int
 	err := s.db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('notebooks') WHERE name='user_id'").Scan(&count)
@@ -218,7 +208,21 @@ func (s *Store) initSchema() error {
 	`
 
 	_, err = s.db.Exec(restSchema)
-	return err
+	if err != nil {
+		return err
+	}
+
+	// Migration: Add status tracking columns to sources table (after table creation)
+	if err := s.migrateSourceStatusColumns(); err != nil {
+		return err
+	}
+
+	// Migration: Add hash_id column to users table for existing databases
+	if err := s.migrateAddHashIDColumn(); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // migrateSourceStatusColumns adds status tracking columns to sources table

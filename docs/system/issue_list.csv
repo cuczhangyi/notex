@@ -1,0 +1,6 @@
+编号,现象,根因,影响范围,严重程度(P0/P1/P2),预估工时,建议标签
+ISS-001,PDF来源解析后文本乱码并影响摘要问答,markitdown失败后直接按二进制读取PDF并转字符串,上传PDF后的解析-向量化-生成全链路,P0,8h,"bug,P0,area:ingest,area:parser"
+ISS-002,转换接口在LLM鉴权失败时返回500（生产路径无降级）,错误处理强依赖外部LLM可用性且缺少分级降级策略,transform接口稳定性与用户体验,P1,4h,"bug,P1,area:llm,area:transform"
+ISS-003,Makefile构建与运行目标指向backend/*.go导致与main入口不一致,工程脚本未与当前入口结构同步,本地开发与CI构建流程,P1,2h,"bug,P1,area:devops"
+ISS-004,仓库缺少*_test.go自动化测试基线,未建立关键路径的单元与集成测试,回归风险与发布质量保障,P2,16h,"techdebt,P2,area:test"
+ISS-005,审计日志缺乏可视化查询与运维策略说明,审计能力仅在代码层存在且文档不足,合规审计与问题追踪效率,P2,6h,"improvement,P2,area:observability"

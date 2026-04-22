@@ -1,0 +1,106 @@
+{
+	"folders": [
+		{
+			"path": "."
+		}
+	],
+	"settings": {
+		"editor.bracketPairColorization.enabled": true,
+    		"editor.guides.bracketPairs":"active",
+		"go.toolsEnvVars": {
+			"GOPRIVATE": "codeup.aliyun.com/*,codehub.devcloud.cn-north-4.huaweicloud.com",
+			"GOPROXY": "https://goproxy.cn/ ,direct",
+			"GONOPROXY": "codeup.aliyun.com/*,codehub.devcloud.cn-north-4.huaweicloud.com",
+			"GONOSUMDB": "codeup.aliyun.com/*,codehub.devcloud.cn-north-4.huaweicloud.com",
+			"GO111MODULE": "on",
+		 },
+		 "terminal.integrated.env.linux": {
+			"GOPRIVATE": "codeup.aliyun.com/*,codehub.devcloud.cn-north-4.huaweicloud.com",
+			"GOPROXY": "https://goproxy.cn/ ,direct",
+			"GONOPROXY": "codeup.aliyun.com/*,codehub.devcloud.cn-north-4.huaweicloud.com",
+			"GONOSUMDB": "codeup.aliyun.com/*,codehub.devcloud.cn-north-4.huaweicloud.com",
+			"GO111MODULE": "on",
+		 },
+		
+		 "terminal.integrated.env.osx": {
+			"GOPRIVATE": "codeup.aliyun.com/*,codehub.devcloud.cn-north-4.huaweicloud.com",
+			"GOPROXY": "https://goproxy.cn/ ,direct",
+			"GONOPROXY": "codeup.aliyun.com/*,codehub.devcloud.cn-north-4.huaweicloud.com",
+			"GONOSUMDB": "codeup.aliyun.com/*,codehub.devcloud.cn-north-4.huaweicloud.com",
+			"GO111MODULE": "on",
+		 },
+		 "terminal.integrated.env.windows": {
+			"GOPRIVATE": "codeup.aliyun.com/*,codehub.devcloud.cn-north-4.huaweicloud.com",
+			"GOPROXY": "https://goproxy.cn/ ,direct",
+			"GONOPROXY": "codeup.aliyun.com/*,codehub.devcloud.cn-north-4.huaweicloud.com",
+			"GONOSUMDB": "codeup.aliyun.com/*,codehub.devcloud.cn-north-4.huaweicloud.com",
+			"GO111MODULE": "on",
+		},
+		"go.docsTool": "guru",
+		"editor.quickSuggestionsDelay": 0,
+		"editor.suggest.snippetsPreventQuickSuggestions": false,
+		"editor.language.colorizedBracketPairs": [
+			["[","]"],
+			["(",")"],
+			["{","}"]
+		],
+		"git-graph.dialog.merge.noFastForward": false,
+		"terminal.integrated.fontFamily": "MesloLGS NF",
+		"editor.fontSize": 15,
+		"editor.hover.delay": 0,
+
+		"go.useLanguageServer": true,
+		"[go]": {
+    		"editor.snippetSuggestions": "bottom",
+    		"editor.formatOnSave": false,
+    		"editor.codeActionsOnSave": {
+				"source.organizeImports": "explicit"
+			}
+		},
+		"gopls": {
+   			 "usePlaceholders": false, // add parameter placeholders when completing a function
+
+			
+		},
+		"files.eol": "\n",
+		"editor.rulers": [
+		
+		],
+		"editor.dropIntoEditor.preferences": [],
+		"go.languageServerExperimentalFeatures": {
+        "diagnostics": false
+	},
+	"editor.codeActionsOnSave": {
+	
+	
+	},
+	"editor.fontLigatures":"'calt', 'ss04', 'ss01', 'ss02'",
+	"editor.fontFamily": "'ZhiMa Mono', Menlo, Monaco, 'Courier New', monospace",
+	"editor.fontVariations": false,
+	"window.zoomLevel": 0.25,
+	
+		//"github.copilot.inlineSuggest.enable": false, // formatting only supports LF line endings
+
+
+
+	},
+	"launch": {
+		"version": "0.2.0",
+		"configurations": [
+		{
+			"name": "Launch Package",
+			"type": "go",
+			"request": "launch",
+			"mode": "debug",
+			"program": "${workspaceFolder}/main.go",
+			"cwd": "${workspaceFolder}",
+			"envFile": "${workspaceFolder}/.env",
+			"console": "integratedTerminal",
+			"showLog": true,
+			"args": [
+				"-server"
+			]
+		}
+		]
+	}
+}

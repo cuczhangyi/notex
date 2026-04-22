@@ -56,10 +56,15 @@ func NewAgent(cfg Config, vectorStore *VectorStore) (*Agent, error) {
 			return nil, fmt.Errorf("zimage_api_key is required when image_provider is 'zimage'")
 		}
 		provider = NewZImageClient(cfg.ZImageAPIKey)
+	case "qwen":
+		if cfg.QwenAPIKey == "" {
+			return nil, fmt.Errorf("qwen_api_key is required when image_provider is 'qwen'")
+		}
+		provider = NewQwenImageClient(cfg.QwenAPIKey, cfg.QwenBaseURL)
 	case "gemini":
 		provider = NewGeminiClient(cfg.GoogleAPIKey, cfg.GeminiBaseURL, llm)
 	default:
-		return nil, fmt.Errorf("unknown image provider: %s (supported: gemini, glm, zimage)", cfg.ImageProvider)
+		return nil, fmt.Errorf("unknown image provider: %s (supported: gemini, glm, zimage, qwen)", cfg.ImageProvider)
 	}
 
 	return &Agent{

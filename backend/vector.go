@@ -61,18 +61,27 @@ func (vs *VectorStore) IngestDocuments(ctx context.Context, notebookID string, p
 
 // ExtractDocument reads and converts a document to text/markdown
 func (vs *VectorStore) ExtractDocument(ctx context.Context, path string) (string, error) {
+	// Convert to absolute path to avoid dependence on process working directory.
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve absolute file path: %w", err)
+	}
+	if _, statErr := os.Stat(absPath); statErr != nil {
+		return "", fmt.Errorf("source file not accessible: %w", statErr)
+	}
+
 	// Check if file is an audio file
-	ext := strings.ToLower(filepath.Ext(path))
+	ext := strings.ToLower(filepath.Ext(absPath))
 	if vs.isAudioFile(ext) {
-		return vs.transcribeAudio(path)
+		return vs.transcribeAudio(absPath)
 	}
 
 	// Check if file needs markitdown conversion
 	if vs.cfg.EnableMarkitdown && vs.needsMarkitdown(ext) {
-		content, err := vs.convertWithMarkitdown(path)
-		if err != nil {
+		content, convertErr := vs.convertWithMarkitdown(absPath)
+		if convertErr != nil {
 			// markitdown failed, fall back to simple text extraction
-			golog.Warnf("[VectorStore] markitdown conversion failed for %s: %v, falling back to simple text extraction", path, err)
+			golog.Warnf("[VectorStore] markitdown conversion failed for %s: %v, falling back to simple text extraction", absPath, convertErr)
 			// Continue to fallback below
 		} else {
 			return content, nil
@@ -80,7 +89,7 @@ func (vs *VectorStore) ExtractDocument(ctx context.Context, path string) (string
 	}
 
 	// Direct read for text files or as fallback when markitdown fails
-	bytes, err := os.ReadFile(path)
+	bytes, err := os.ReadFile(absPath)
 	if err != nil {
 		return "", err
 	}
