@@ -25,6 +25,7 @@ const notebooks = computed(() => notebookStore.notebooks);
 const loading = computed(() => notebookStore.loading);
 const error = computed(() => notebookStore.error);
 const togglingShareId = computed(() => notebookStore.togglingShareId);
+const deletingNotebookId = computed(() => notebookStore.deletingNotebookId);
 const user = computed(() => authStore.user);
 const isLoggedIn = computed(() => authStore.isLoggedIn);
 const shareModalVisible = ref(false);
@@ -56,16 +57,6 @@ const shareLink = computed(() => {
  */
 function openNotebook(id: string) {
   router.push(`/notes/${id}`);
-}
-
-/**
- * 打开公开笔记本
- */
-function openPublicNotebook(token?: string) {
-  if (!token) {
-    return;
-  }
-  router.push(`/public/${token}`);
 }
 
 /**
@@ -251,7 +242,8 @@ async function loginWithTestAccount() {
  */
 function logout() {
   authStore.clearToken();
-  void notebookStore.loadNotebooks();
+  notebookStore.notebooks = [];
+  notebookStore.error = "";
 }
 
 /**
@@ -292,6 +284,22 @@ async function createNotebook() {
 }
 
 /**
+ * 删除笔记本
+ */
+async function deleteNotebook(item: Notebook) {
+  const confirmed = window.confirm(`确定删除笔记本「${item.name}」吗？该操作不可恢复。`);
+  if (!confirmed) {
+    return;
+  }
+  try {
+    await notebookStore.deleteNotebook(item.id);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    window.alert(`删除失败：${message}`);
+  }
+}
+
+/**
  * 格式化卡片时间
  */
 function formatCardDate(dateString?: string) {
@@ -321,9 +329,13 @@ function formatCardDate(dateString?: string) {
 }
 
 onMounted(async () => {
-  await Promise.all([notebookStore.loadNotebooks(), loadPublicNotebooks()]);
+  await loadPublicNotebooks();
   if (authStore.token) {
     await authStore.fetchMe();
+    await notebookStore.loadNotebooks();
+  } else {
+    notebookStore.notebooks = [];
+    notebookStore.error = "";
   }
 });
 </script>
@@ -346,13 +358,7 @@ onMounted(async () => {
         </div>
       </div>
       <div class="header-actions">
-        <a href="https://github.com/smallnest/notex" target="_blank" class="btn-github" title="GitHub 仓库">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
-            <path
-              d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.042-1.416-4.042-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.44-1.304.806-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"
-            />
-          </svg>
-        </a>
+        
         <div class="auth-container">
           <button v-if="!isLoggedIn" class="btn-primary btn-sm" @click="openLoginModal">登录</button>
           <div v-else class="user-profile">
@@ -370,7 +376,7 @@ onMounted(async () => {
           <h1>我的笔记本</h1>
           <p>管理和探索你的知识存档</p>
         </div>
-        <button class="btn-primary btn-large" @click="openNotebookModal">
+        <button v-if="isLoggedIn" class="btn-primary btn-large" @click="openNotebookModal">
           <svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2">
             <line x1="8" y1="2" x2="8" y2="14" />
             <line x1="2" y1="8" x2="14" y2="8" />
@@ -379,7 +385,7 @@ onMounted(async () => {
         </button>
       </div>
 
-      <div class="public-showcase">
+      <!-- <div class="public-showcase">
         <div class="public-showcase-header">
           <h2 class="public-showcase-title">精选公开笔记本</h2>
           <p class="public-showcase-subtitle">探索社区分享的知识</p>
@@ -407,13 +413,28 @@ onMounted(async () => {
             </article>
           </div>
         </div>
-      </div>
+      </div> -->
 
       <p v-if="loading" class="muted">笔记本加载中...</p>
+      <div v-else-if="!isLoggedIn" class="landing-auth-empty">
+        <h2>请先登录后继续</h2>
+        <p>登录后即可创建笔记本、上传资料并生成结构化笔记。</p>
+        <button class="btn-primary btn-sm" @click="openLoginModal">立即登录</button>
+      </div>
       <p v-else-if="error" class="error">加载失败：{{ error }}</p>
 
       <div v-else class="notebook-grid">
         <article v-for="item in notebooks" :key="item.id" class="notebook-card" @click="openNotebook(item.id)">
+          <button
+            class="btn-delete-card"
+            :disabled="deletingNotebookId === item.id"
+            title="删除笔记本"
+            @click.stop="deleteNotebook(item)"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8">
+              <path d="M5 5L11 11M11 5L5 11"></path>
+            </svg>
+          </button>
           <div class="notebook-card-content">
             <div class="notebook-card-icon">
               <svg viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="1.5">

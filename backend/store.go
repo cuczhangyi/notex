@@ -1012,11 +1012,25 @@ func (s *Store) ListPublicNotebooks(ctx context.Context) ([]NotebookWithStats, e
 
 // Source operations
 
+// normalizeSourceStatus ensures source status/progress are consistent for non-async sources.
+func normalizeSourceStatus(src *Source) {
+	if src == nil {
+		return
+	}
+	if strings.TrimSpace(src.Status) == "" {
+		src.Status = "completed"
+		if src.Progress <= 0 {
+			src.Progress = 100
+		}
+	}
+}
+
 // CreateSource creates a new source
 func (s *Store) CreateSource(ctx context.Context, source *Source) error {
 	if source.ID == "" {
 		source.ID = uuid.New().String()
 	}
+	normalizeSourceStatus(source)
 	now := time.Now()
 	source.CreatedAt = now
 	source.UpdatedAt = now
@@ -1060,6 +1074,7 @@ func (s *Store) GetSource(ctx context.Context, id string) (*Source, error) {
 	} else {
 		src.Metadata = make(map[string]interface{})
 	}
+	normalizeSourceStatus(&src)
 
 	return &src, nil
 }
@@ -1108,6 +1123,7 @@ func (s *Store) GetSourceByFileName(ctx context.Context, filename string) (*Sour
 	} else {
 		src.Metadata = make(map[string]interface{})
 	}
+	normalizeSourceStatus(&src)
 
 	notebook.CreatedAt = time.Unix(notebookCreatedAt, 0)
 	notebook.UpdatedAt = time.Unix(notebookUpdatedAt, 0)
@@ -1158,6 +1174,7 @@ func (s *Store) ListSources(ctx context.Context, notebookID string) ([]Source, e
 		} else {
 			src.Metadata = make(map[string]interface{})
 		}
+		normalizeSourceStatus(&src)
 
 		sources = append(sources, src)
 	}

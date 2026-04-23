@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"embed"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"net/http"
@@ -189,6 +190,7 @@ func (s *Server) setupRoutes() {
 			notebooks.DELETE("/:id/notes/:noteId", s.handleDeleteNote)
 
 			// Transformations
+			notebooks.POST("/:id/transform/:type", s.handleTransformByType)
 			notebooks.POST("/:id/transform", s.handleTransform)
 
 			// Chat within a notebook
@@ -237,6 +239,7 @@ func (s *Server) setupRoutes() {
 			notebooks.DELETE("/:id/notes/:noteId", s.handleDeleteNote)
 
 			// Transformations
+			notebooks.POST("/:id/transform/:type", s.handleTransformByType)
 			notebooks.POST("/:id/transform", s.handleTransform)
 
 			// Chat within a notebook
@@ -608,6 +611,8 @@ func (s *Server) handleAddSource(c *gin.Context) {
 		Type:       req.Type,
 		URL:        req.URL,
 		Content:    req.Content,
+		Status:     "completed",
+		Progress:   100,
 		Metadata:   req.Metadata,
 	}
 
@@ -876,10 +881,53 @@ func (s *Server) handleDeleteNote(c *gin.Context) {
 
 // Transformation handlers
 
+// supportsSSETransform 判断当前请求是否要求以 SSE 形式接收 transform 结果。
+func supportsSSETransform(c *gin.Context) bool {
+	return strings.Contains(strings.ToLower(c.GetHeader("Accept")), "text/event-stream")
+}
+
+// resolveTransformType 优先读取路径中的 transform 类型，并与请求体类型进行兼容合并。
+func resolveTransformType(c *gin.Context, reqType string) (string, error) {
+	pathType := strings.TrimSpace(c.Param("type"))
+	bodyType := strings.TrimSpace(reqType)
+	if pathType == "" {
+		if bodyType == "" {
+			return "", fmt.Errorf("type is required")
+		}
+		return bodyType, nil
+	}
+	if bodyType != "" && bodyType != pathType {
+		return "", fmt.Errorf("transform type mismatch: path=%s body=%s", pathType, bodyType)
+	}
+	return pathType, nil
+}
+
+// writeSSEEvent 统一写入 SSE 事件并立即刷新到客户端。
+func writeSSEEvent(c *gin.Context, event string, payload interface{}) error {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal sse payload: %w", err)
+	}
+	if _, err := c.Writer.WriteString("event: " + event + "\n"); err != nil {
+		return fmt.Errorf("write sse event: %w", err)
+	}
+	if _, err := c.Writer.WriteString("data: " + string(data) + "\n\n"); err != nil {
+		return fmt.Errorf("write sse data: %w", err)
+	}
+	c.Writer.Flush()
+	return nil
+}
+
+// handleTransformByType 按类型路径处理转换请求，便于不同类型独立优化。
+func (s *Server) handleTransformByType(c *gin.Context) {
+	s.handleTransform(c)
+}
+
 func (s *Server) handleTransform(c *gin.Context) {
 	ctx := context.Background()
 	notebookID := c.Param("id")
 	userID := c.GetString("user_id")
+	useSSE := supportsSSETransform(c)
 
 	// 按需加载向量索引
 	if err := s.loadNotebookVectorIndex(ctx, notebookID); err != nil {
@@ -891,16 +939,50 @@ func (s *Server) handleTransform(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
 		return
 	}
+	resolvedType, err := resolveTransformType(c, req.Type)
+	if err != nil {
+		if useSSE {
+			_ = writeSSEEvent(c, "error", gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+		return
+	}
+	req.Type = resolvedType
+
+	if useSSE {
+		c.Header("Content-Type", "text/event-stream")
+		c.Header("Cache-Control", "no-cache")
+		c.Header("Connection", "keep-alive")
+		c.Header("X-Accel-Buffering", "no")
+
+		if err := writeSSEEvent(c, "progress", gin.H{
+			"stage":   "accepted",
+			"message": "请求已接收，开始执行转换",
+			"percent": 5,
+		}); err != nil {
+			golog.Errorf("failed to write sse start event: %v", err)
+			return
+		}
+	}
 
 	// Check if multiple notes of same type are allowed
 	if !s.cfg.AllowMultipleNotesOfSameType {
 		existingNotes, err := s.store.ListNotes(ctx, notebookID)
 		if err != nil {
+			if useSSE {
+				_ = writeSSEEvent(c, "error", gin.H{"error": "Failed to check existing notes"})
+				return
+			}
 			c.JSON(http.StatusInternalServerError, ErrorResponse{Error: "Failed to check existing notes"})
 			return
 		}
 		for _, note := range existingNotes {
 			if note.Type == req.Type {
+				if useSSE {
+					_ = writeSSEEvent(c, "error", gin.H{"error": "该笔记本已存在相同类型的笔记，不允许创建重复类型"})
+					return
+				}
 				c.JSON(http.StatusConflict, ErrorResponse{Error: "该笔记本已存在相同类型的笔记，不允许创建重复类型"})
 				return
 			}
@@ -910,6 +992,10 @@ func (s *Server) handleTransform(c *gin.Context) {
 	// Get sources
 	sources, err := s.store.ListSources(ctx, notebookID)
 	if err != nil {
+		if useSSE {
+			_ = writeSSEEvent(c, "error", gin.H{"error": "Failed to get sources"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: "Failed to get sources"})
 		return
 	}
@@ -936,8 +1022,23 @@ func (s *Server) handleTransform(c *gin.Context) {
 	}
 
 	if len(sources) == 0 {
+		if useSSE {
+			_ = writeSSEEvent(c, "error", gin.H{"error": "No sources available"})
+			return
+		}
 		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "No sources available"})
 		return
+	}
+
+	if useSSE {
+		if err := writeSSEEvent(c, "progress", gin.H{
+			"stage":   "generating",
+			"message": "AI 正在生成内容",
+			"percent": 35,
+		}); err != nil {
+			golog.Errorf("failed to write sse generating event: %v", err)
+			return
+		}
 	}
 
 	// Generate transformation
@@ -949,6 +1050,10 @@ func (s *Server) handleTransform(c *gin.Context) {
 			golog.Warnf("LLM auth failed in test mode, using mock transformation: %v", err)
 			response = buildMockTransformationResponse(&req, sources)
 		} else {
+			if useSSE {
+				_ = writeSSEEvent(c, "error", gin.H{"error": fmt.Sprintf("Generation failed: %v", err)})
+				return
+			}
 			c.JSON(http.StatusInternalServerError, ErrorResponse{Error: fmt.Sprintf("Generation failed: %v", err)})
 			return
 		}
@@ -961,6 +1066,16 @@ func (s *Server) handleTransform(c *gin.Context) {
 
 	// If type is infograph, generate the image as well
 	if req.Type == "infograph" {
+		if useSSE {
+			if err := writeSSEEvent(c, "progress", gin.H{
+				"stage":   "image_generating",
+				"message": "正在生成信息图图片",
+				"percent": 65,
+			}); err != nil {
+				golog.Errorf("failed to write sse infograph event: %v", err)
+				return
+			}
+		}
 		extra := "**注意：无论来源是什么语言，请务必使用中文**"
 		prompt := response.Content + "\n\n" + extra
 		imageModel := s.getImageModelForProvider()
@@ -986,6 +1101,20 @@ func (s *Server) handleTransform(c *gin.Context) {
 			golog.Infof("generating %d slides for ppt...", len(slides))
 
 			for i, slide := range slides {
+				if useSSE {
+					percent := 65
+					if len(slides) > 0 {
+						percent = 65 + int(float64(i)*25.0/float64(len(slides)))
+					}
+					if err := writeSSEEvent(c, "progress", gin.H{
+						"stage":   "ppt_image_generating",
+						"message": fmt.Sprintf("正在生成第 %d/%d 页图片", i+1, len(slides)),
+						"percent": percent,
+					}); err != nil {
+						golog.Errorf("failed to write sse ppt event: %v", err)
+						return
+					}
+				}
 				golog.Infof("generating image for slide %d/%d...", i+1, len(slides))
 				// Combine style and slide content for the image generator
 				prompt := fmt.Sprintf("Style: %s\n\nSlide Content: %s", slides[0].Style, slide.Content)
@@ -1024,6 +1153,10 @@ func (s *Server) handleTransform(c *gin.Context) {
 	}
 
 	if err := s.store.CreateNote(ctx, note); err != nil {
+		if useSSE {
+			_ = writeSSEEvent(c, "error", gin.H{"error": "Failed to save note"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: "Failed to save note"})
 		return
 	}
@@ -1066,6 +1199,20 @@ func (s *Server) handleTransform(c *gin.Context) {
 				s.store.UpdateSourceChunkCount(ctx, insightSource.ID, chunkCount)
 			}
 		}
+	}
+	if useSSE {
+		if err := writeSSEEvent(c, "progress", gin.H{
+			"stage":   "completed",
+			"message": "转换完成",
+			"percent": 100,
+		}); err != nil {
+			golog.Errorf("failed to write sse completed event: %v", err)
+			return
+		}
+		if err := writeSSEEvent(c, "result", note); err != nil {
+			golog.Errorf("failed to write sse result event: %v", err)
+		}
+		return
 	}
 
 	c.JSON(http.StatusOK, note)
@@ -1196,6 +1343,15 @@ func (s *Server) handleSendMessage(c *gin.Context) {
 	ctx := context.Background()
 	notebookID := c.Param("id")
 	sessionID := c.Param("sessionId")
+	useSSE := supportsSSETransform(c)
+
+	writeChatError := func(status int, msg string) {
+		if useSSE {
+			_ = writeSSEEvent(c, "error", gin.H{"error": msg})
+			return
+		}
+		c.JSON(status, ErrorResponse{Error: msg})
+	}
 
 	// 按需加载向量索引
 	if err := s.loadNotebookVectorIndex(ctx, notebookID); err != nil {
@@ -1204,28 +1360,56 @@ func (s *Server) handleSendMessage(c *gin.Context) {
 
 	var req ChatRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+		if useSSE {
+			c.Header("Content-Type", "text/event-stream")
+			c.Header("Cache-Control", "no-cache")
+			c.Header("Connection", "keep-alive")
+			c.Header("X-Accel-Buffering", "no")
+		}
+		writeChatError(http.StatusBadRequest, err.Error())
 		return
+	}
+
+	if useSSE {
+		c.Header("Content-Type", "text/event-stream")
+		c.Header("Cache-Control", "no-cache")
+		c.Header("Connection", "keep-alive")
+		c.Header("X-Accel-Buffering", "no")
+		if err := writeSSEEvent(c, "progress", gin.H{
+			"message": "消息已接收，正在检索上下文",
+			"percent":  10,
+		}); err != nil {
+			golog.Warnf("failed to write chat sse progress event: %v", err)
+		}
 	}
 
 	// Add user message
 	_, err := s.store.AddChatMessage(ctx, sessionID, "user", req.Message, nil)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: "Failed to add message"})
+		writeChatError(http.StatusInternalServerError, "Failed to add message")
 		return
 	}
 
 	// Get session history
 	session, err := s.store.GetChatSession(ctx, sessionID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: "Failed to get session"})
+		writeChatError(http.StatusInternalServerError, "Failed to get session")
 		return
+	}
+
+	if useSSE {
+		if err := writeSSEEvent(c, "progress", gin.H{
+			"message": "正在生成回答",
+			"percent":  60,
+		}); err != nil {
+			golog.Warnf("failed to write chat sse progress event: %v", err)
+		}
 	}
 
 	// Generate response
 	response, err := s.agent.Chat(ctx, s.store.Store, notebookID, sessionID, req.Message, session.Messages)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: fmt.Sprintf("Chat failed: %v", err)})
+		writeChatError(http.StatusInternalServerError, fmt.Sprintf("Chat failed: %v", err))
 		return
 	}
 
@@ -1236,7 +1420,20 @@ func (s *Server) handleSendMessage(c *gin.Context) {
 	}
 	_, err = s.store.AddChatMessage(ctx, sessionID, "assistant", response.Message, sourceIDs)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: "Failed to save response"})
+		writeChatError(http.StatusInternalServerError, "Failed to save response")
+		return
+	}
+
+	if useSSE {
+		if err := writeSSEEvent(c, "progress", gin.H{
+			"message": "回答生成完成",
+			"percent":  100,
+		}); err != nil {
+			golog.Warnf("failed to write chat sse progress event: %v", err)
+		}
+		if err := writeSSEEvent(c, "result", response); err != nil {
+			golog.Warnf("failed to write chat sse result event: %v", err)
+		}
 		return
 	}
 

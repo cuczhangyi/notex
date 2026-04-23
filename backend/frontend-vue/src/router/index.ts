@@ -11,9 +11,20 @@ const router = createRouter({
   history: createWebHistory(),
   routes: [
     { path: "/", name: "landing", component: LandingView },
-    { path: "/notes/:id", name: "workspace", component: WorkspaceView },
+    { path: "/notes/:id", name: "workspace", component: WorkspaceView, meta: { requiresAuth: true } },
     { path: "/public/:token", name: "public", component: PublicView },
   ],
+});
+
+/**
+ * 路由鉴权守卫：未登录用户访问工作区时跳转首页
+ */
+router.beforeEach((to) => {
+  const token = localStorage.getItem("token");
+  if (to.meta.requiresAuth && !token) {
+    return { path: "/" };
+  }
+  return true;
 });
 
 export default router;

@@ -20,6 +20,7 @@ export const useNotebookStore = defineStore("notebook", {
     notebooks: [] as Notebook[],
     loading: false,
     togglingShareId: "",
+    deletingNotebookId: "",
     error: "",
   }),
   actions: {
@@ -76,6 +77,25 @@ export const useNotebookStore = defineStore("notebook", {
       });
       this.notebooks = [notebook, ...this.notebooks];
       return notebook;
+    },
+    /**
+     * 删除笔记本
+     */
+    async deleteNotebook(notebookId: string) {
+      this.deletingNotebookId = notebookId;
+      this.error = "";
+      try {
+        await request<void>(`/api/notebooks/${notebookId}`, {
+          method: "DELETE",
+        });
+        this.notebooks = this.notebooks.filter((item) => item.id !== notebookId);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        this.error = message;
+        throw err;
+      } finally {
+        this.deletingNotebookId = "";
+      }
     },
   },
 });

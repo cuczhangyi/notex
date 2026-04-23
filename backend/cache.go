@@ -398,6 +398,30 @@ func (cs *CachedStore) DeleteSource(ctx context.Context, id string) error {
 	return nil
 }
 
+// UpdateSourceStatus updates source processing status and invalidates source list cache.
+func (cs *CachedStore) UpdateSourceStatus(ctx context.Context, id, status string, progress int, errorMsg string) error {
+	err := cs.Store.UpdateSourceStatus(ctx, id, status, progress, errorMsg)
+	if err != nil {
+		return err
+	}
+
+	// We only know source ID here; invalidate all source lists to avoid stale status.
+	cs.cache.InvalidatePattern("sources:")
+	return nil
+}
+
+// UpdateSourceContent updates source content and invalidates source list cache.
+func (cs *CachedStore) UpdateSourceContent(ctx context.Context, id string, content string, chunkCount int) error {
+	err := cs.Store.UpdateSourceContent(ctx, id, content, chunkCount)
+	if err != nil {
+		return err
+	}
+
+	// Keep list payload fresh after content/chunk/status are updated.
+	cs.cache.InvalidatePattern("sources:")
+	return nil
+}
+
 // ListChatSessions retrieves all chat sessions for a notebook with caching
 func (cs *CachedStore) ListChatSessions(ctx context.Context, notebookID string) ([]ChatSession, error) {
 	key := chatSessionsKey(notebookID)

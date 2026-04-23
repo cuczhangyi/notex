@@ -16,6 +16,14 @@ export interface SourceItem {
 }
 
 /**
+ * 判断来源是否处于待处理状态（空状态按 processing 处理，避免轮询误判完成）
+ */
+function isSourceProcessing(status?: string): boolean {
+  const normalized = (status || "").trim().toLowerCase();
+  return normalized === "" || normalized === "pending" || normalized === "processing";
+}
+
+/**
  * 来源状态管理
  */
 export const useSourceStore = defineStore("source", {
@@ -152,7 +160,7 @@ export const useSourceStore = defineStore("source", {
      */
     async refreshProcessingStatuses(notebookId: string) {
       const processing = this.items.filter(
-        (item) => item.status === "pending" || item.status === "processing",
+        (item) => isSourceProcessing(item.status),
       );
       if (processing.length === 0) {
         return;
@@ -173,7 +181,7 @@ export const useSourceStore = defineStore("source", {
       this.items = this.items.map((item) => byID.get(item.id) || item);
 
       const stillProcessing = this.items.some(
-        (item) => item.status === "pending" || item.status === "processing",
+        (item) => isSourceProcessing(item.status),
       );
       if (!stillProcessing) {
         await this.loadSources(notebookId);

@@ -445,7 +445,7 @@ func pptPrompt() string {
 - 倾向于使用叙事性的主题句来帮助将整套幻灯片联系在一起
 - 确保所有数据点都有源材料支撑
 - 为设计师提供足够详细的描述
-
+- 在每幻灯片前面用 "【幻灯片】-【编号】"的形式进行标明。
 ---
 
 ## 总结
@@ -537,7 +537,8 @@ func dataChartPrompt() string {
 - title 字段：图表的标题
 - option 字段：ECharts 的完整 option 配置对象
 
-输出必须是有效的 JSON 数组，不要包含 markdown 代码块标记，不要添加任何其他文字或说明。`
+输出必须是有效的 JSON 数组，不要包含 markdown 代码块标记，不要添加任何其他文字或说明。
+严禁输出转义后的 JSON 字符串（例如包含反斜杠转义双引号的内容）；必须直接输出可被 JSON.parse 一次成功解析的原始 JSON。`
 }
 
 // Chat system prompt - Optimized for better context handling and source citation

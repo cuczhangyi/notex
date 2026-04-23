@@ -1,5 +1,5 @@
 import { defineStore } from "pinia";
-import { request } from "../api/request";
+import { request, requestSSE } from "../api/request";
 
 interface SourceSummary {
   id: string;
@@ -144,7 +144,7 @@ export const useChatStore = defineStore("chat", {
           content: message,
         });
 
-        const response = await request<ChatResponse>(
+        const response = await requestSSE<ChatResponse>(
           `/api/notebooks/${notebookId}/chat/sessions/${sessionId}/messages`,
           {
             method: "POST",

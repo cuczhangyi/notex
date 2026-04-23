@@ -40,6 +40,7 @@ const selectedSourceId = ref("");
 const selectedNoteId = ref("");
 const activeCenterTab = ref<"notes_list" | "note">("notes_list");
 const noteContentRef = ref<HTMLDivElement | null>(null);
+const pptSlideIndex = ref(0);
 let mermaidInitialized = false;
 const transformOptions = [
   { type: "summary", label: "摘要" },
@@ -64,6 +65,8 @@ const markdownNoteTypes = new Set([
   "outline",
   "blog",
   "timeline",
+  "glossary",
+  "data_table",
 ]);
 
 const token = computed(() => String(route.params.token || ""));
@@ -85,6 +88,54 @@ const shouldRenderMindmapNote = computed(() => {
 });
 const shouldRenderRichNote = computed(() => {
   return shouldRenderMarkdownNote.value || shouldRenderMindmapNote.value;
+});
+const selectedNotePPTSlides = computed(() => {
+  const note = selectedNote.value;
+  if (!note || note.type !== "ppt" || !note.metadata || typeof note.metadata !== "object") {
+    return [] as string[];
+  }
+  const slides = (note.metadata as Record<string, unknown>).slides;
+  if (!Array.isArray(slides)) {
+    return [] as string[];
+  }
+  return slides.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+});
+const shouldRenderPPTSlides = computed(() => selectedNotePPTSlides.value.length > 0);
+const currentPPTSlideUrl = computed(() => {
+  const slides = selectedNotePPTSlides.value;
+  if (slides.length === 0) {
+    return "";
+  }
+  const maxIndex = slides.length - 1;
+  const safeIndex = Math.min(Math.max(pptSlideIndex.value, 0), maxIndex);
+  return slides[safeIndex] || "";
+});
+const pptSlideIndicator = computed(() => {
+  const total = selectedNotePPTSlides.value.length;
+  if (total === 0) {
+    return "0 / 0";
+  }
+  return `${Math.min(pptSlideIndex.value + 1, total)} / ${total}`;
+});
+const pptPrevDisabled = computed(() => pptSlideIndex.value <= 0);
+const pptNextDisabled = computed(() => pptSlideIndex.value >= selectedNotePPTSlides.value.length - 1);
+const selectedNoteInfographImageUrl = computed(() => {
+  const note = selectedNote.value;
+  if (!note || note.type !== "infograph") {
+    return "";
+  }
+  const content = typeof note.content === "string" ? note.content.trim() : "";
+  if (content) {
+    return "";
+  }
+  if (!note.metadata || typeof note.metadata !== "object") {
+    return "";
+  }
+  const imageURL = (note.metadata as Record<string, unknown>).image_url;
+  if (typeof imageURL !== "string") {
+    return "";
+  }
+  return imageURL.trim();
 });
 const selectedNoteRenderedHtml = computed(() => {
   if (!selectedNote.value?.content) {
@@ -443,6 +494,26 @@ function backToList() {
 }
 
 /**
+ * 显示上一张 PPT 图片
+ */
+function showPrevPPTSlide() {
+  if (pptPrevDisabled.value) {
+    return;
+  }
+  pptSlideIndex.value -= 1;
+}
+
+/**
+ * 显示下一张 PPT 图片
+ */
+function showNextPPTSlide() {
+  if (pptNextDisabled.value) {
+    return;
+  }
+  pptSlideIndex.value += 1;
+}
+
+/**
  * 加载公开笔记本数据
  */
 async function loadPublicNotebook() {
@@ -481,6 +552,13 @@ watch(
   () => [selectedNote.value?.id, selectedNote.value?.content, activeCenterTab.value],
   () => {
     void renderSelectedNoteMermaid();
+  },
+);
+
+watch(
+  () => [selectedNote.value?.id, selectedNotePPTSlides.value.length],
+  () => {
+    pptSlideIndex.value = 0;
   },
 );
 
@@ -599,6 +677,23 @@ onMounted(async () => {
                 class="markdown-content"
                 v-html="selectedNoteRenderedHtml"
               ></div>
+              <div v-else-if="shouldRenderPPTSlides" class="ppt-slides-view">
+                <div class="ppt-slides-toolbar">
+                  <button type="button" class="btn-slide-nav" :disabled="pptPrevDisabled" @click="showPrevPPTSlide">
+                    上一张
+                  </button>
+                  <span class="ppt-slides-indicator">{{ pptSlideIndicator }}</span>
+                  <button type="button" class="btn-slide-nav" :disabled="pptNextDisabled" @click="showNextPPTSlide">
+                    下一张
+                  </button>
+                </div>
+                <div class="ppt-slide-image-wrap">
+                  <img :src="currentPPTSlideUrl" :alt="`幻灯片 ${pptSlideIndicator}`" loading="lazy" />
+                </div>
+              </div>
+              <div v-else-if="selectedNoteInfographImageUrl" class="markdown-content">
+                <img :src="selectedNoteInfographImageUrl" alt="信息图" loading="lazy" />
+              </div>
               <pre v-else>{{ selectedNote.content }}</pre>
             </div>
             <p v-else class="muted">暂无笔记</p>

@@ -105,6 +105,7 @@ const infographStyleDropdownVisible = ref(false);
 const selectedInfographStyle = ref<string | null>(null);
 const infographStylesLoaded = ref(false);
 const infographStyles = ref<Array<{ id: string; name: string; description: string }>>([]);
+const pptSlideIndex = ref(0);
 const pdfViewportRef = ref<HTMLDivElement | null>(null);
 const pdfCanvasRef = ref<HTMLCanvasElement | null>(null);
 const pdfLoading = ref(false);
@@ -179,6 +180,8 @@ const markdownNoteTypes = new Set([
   "outline",
   "blog",
   "timeline",
+  "glossary",
+  "data_table",
 ]);
 
 /**
@@ -285,6 +288,54 @@ const shouldRenderMindmapNote = computed(() => {
 });
 const shouldRenderRichNote = computed(() => {
   return shouldRenderMarkdownNote.value || shouldRenderMindmapNote.value;
+});
+const selectedNotePPTSlides = computed(() => {
+  const note = selectedNote.value;
+  if (!note || note.type !== "ppt" || !note.metadata || typeof note.metadata !== "object") {
+    return [] as string[];
+  }
+  const slides = (note.metadata as Record<string, unknown>).slides;
+  if (!Array.isArray(slides)) {
+    return [] as string[];
+  }
+  return slides.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+});
+const shouldRenderPPTSlides = computed(() => selectedNotePPTSlides.value.length > 0);
+const currentPPTSlideUrl = computed(() => {
+  const slides = selectedNotePPTSlides.value;
+  if (slides.length === 0) {
+    return "";
+  }
+  const maxIndex = slides.length - 1;
+  const safeIndex = Math.min(Math.max(pptSlideIndex.value, 0), maxIndex);
+  return slides[safeIndex] || "";
+});
+const pptSlideIndicator = computed(() => {
+  const total = selectedNotePPTSlides.value.length;
+  if (total === 0) {
+    return "0 / 0";
+  }
+  return `${Math.min(pptSlideIndex.value + 1, total)} / ${total}`;
+});
+const pptPrevDisabled = computed(() => pptSlideIndex.value <= 0);
+const pptNextDisabled = computed(() => pptSlideIndex.value >= selectedNotePPTSlides.value.length - 1);
+const selectedNoteInfographImageUrl = computed(() => {
+  const note = selectedNote.value;
+  if (!note || note.type !== "infograph") {
+    return "";
+  }
+  const content = typeof note.content === "string" ? note.content.trim() : "";
+  if (content) {
+    return "";
+  }
+  if (!note.metadata || typeof note.metadata !== "object") {
+    return "";
+  }
+  const imageURL = (note.metadata as Record<string, unknown>).image_url;
+  if (typeof imageURL !== "string") {
+    return "";
+  }
+  return imageURL.trim();
 });
 const selectedNoteRenderedHtml = computed(() => {
   if (!selectedNote.value?.content) {
@@ -416,6 +467,16 @@ function parseJsonPayload(content: string): unknown {
   const jsonMatch = normalized.match(/(\[[\s\S]*\])|(\{[\s\S]*\})/);
   if (jsonMatch?.[0] && jsonMatch[0] !== normalized) {
     candidates.push(jsonMatch[0]);
+  }
+  // 兼容被转义后的 JSON 文本，例如：[{\"title\":\"...\"}]
+  if (normalized.includes('\\"')) {
+    candidates.push(
+      normalized
+        .replace(/\\"/g, '"')
+        .replace(/\\n/g, "\n")
+        .replace(/\\r/g, "\r")
+        .replace(/\\t/g, "\t"),
+    );
   }
 
   for (const candidate of candidates) {
@@ -669,6 +730,26 @@ function closeSourceTab(sourceId: string) {
   textSearchMatchCount.value = 0;
   textSearchCurrentIndex.value = -1;
   resetImagePreviewTransform();
+}
+
+/**
+ * 显示上一张 PPT 图片
+ */
+function showPrevPPTSlide() {
+  if (pptPrevDisabled.value) {
+    return;
+  }
+  pptSlideIndex.value -= 1;
+}
+
+/**
+ * 显示下一张 PPT 图片
+ */
+function showNextPPTSlide() {
+  if (pptNextDisabled.value) {
+    return;
+  }
+  pptSlideIndex.value += 1;
 }
 
 /**
@@ -940,6 +1021,21 @@ function renderMarkdownContent(noteType: string, content: string): string {
     return `<pre>${escapeHTML(normalizedContent)}</pre>`;
   }
   return markedLib.parse(normalizedContent);
+}
+
+/**
+ * 渲染对话消息内容（助手消息走 Markdown，用户消息保留纯文本）
+ */
+function renderChatMessageHtml(role: string, content: string): string {
+  const safeContent = typeof content === "string" ? content : "";
+  if (role !== "assistant") {
+    return `<p>${escapeHTML(safeContent).replace(/\n/g, "<br />")}</p>`;
+  }
+  const markedLib = window.marked;
+  if (!markedLib) {
+    return `<pre>${escapeHTML(safeContent)}</pre>`;
+  }
+  return markedLib.parse(safeContent);
 }
 
 /**
@@ -1356,6 +1452,12 @@ async function copySelectedNoteMarkdown() {
     return;
   }
   await navigator.clipboard.writeText(selectedNote.value.content);
+  // 使用浏览器原生通知或 alert 替代未引入的 toast
+  if (window.Notification && Notification.permission === "granted") {
+    new Notification("复制成功");
+  } else {
+    alert("复制成功");
+  }
 }
 
 /**
@@ -1546,9 +1648,11 @@ async function createSession() {
  * 切换会话
  */
 async function openSession(sessionId: string) {
-  if (!notebookId.value) {
+  if (!notebookId.value || !sessionId) {
     return;
   }
+  // 与旧版行为保持一致：从会话历史点击后直接进入对话视图。
+  activeCenterTab.value = "chat";
   await chatStore.loadSessionDetail(notebookId.value, sessionId);
 }
 
@@ -1607,6 +1711,17 @@ function getSessionSummary(session: ChatSession): string {
     return metadataSummary.trim();
   }
   return "";
+}
+
+/**
+ * 获取会话列表的副文本（优先摘要，兜底显示更新时间）
+ */
+function getSessionMetaText(session: ChatSession): string {
+  const summary = getSessionSummary(session);
+  if (summary) {
+    return summary;
+  }
+  return formatDate(session.updated_at || session.created_at);
 }
 
 /**
@@ -1705,6 +1820,13 @@ watch(
 );
 
 watch(
+  () => [selectedNote.value?.id, selectedNotePPTSlides.value.length],
+  () => {
+    pptSlideIndex.value = 0;
+  },
+);
+
+watch(
   () => [selectedNote.value?.id, selectedNote.value?.content, activeCenterTab.value],
   () => {
     void renderSelectedNoteCharts();
@@ -1774,7 +1896,7 @@ onBeforeUnmount(() => {
             >
               <div class="title">{{ item.name }}</div>
               <div class="meta">
-                {{ item.type }} · {{ formatSize(item.file_size) }} · {{ item.status || "completed" }}
+                {{ item.type }} · {{ formatSize(item.file_size) }} · {{ (item.status && item.status.trim()) || "processing" }}
               </div>
             </li>
           </ul>
@@ -1828,42 +1950,56 @@ onBeforeUnmount(() => {
               </button>
             </div>
             <div class="panel-header-actions">
-              <button class="btn-icon" title="新建对话" :disabled="clearingSessions" @click="createSession">
+              <!-- <button class="btn-icon" title="新建对话" :disabled="clearingSessions" @click="createSession">
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2">
                   <line x1="8" y1="2" x2="8" y2="14" />
                   <line x1="2" y1="8" x2="14" y2="8" />
                 </svg>
               </button>
-              <button class="btn-icon" title="清空历史" :disabled="clearingSessions" @click="clearSessions">
+              <button
+                v-if="activeCenterTab !== 'sessions'"
+                class="btn-icon"
+                title="清空历史"
+                :disabled="clearingSessions"
+                @click="clearSessions"
+              >
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2">
                   <path d="M3 6h10M8 6v7M5 6l-2 6M11 6l2 6" />
                 </svg>
-              </button>
+              </button> -->
             </div>
           </div>
 
           <div v-if="activeCenterTab === 'sessions'" class="chat-sessions-panel">
+            <div class="sessions-header">
+              <div class="sessions-header-left">
+                <h3>对话历史</h3>
+                <p class="sessions-subtitle">记住一下对话，省时又省力</p>
+              </div>
+              <button class="btn-clear-sessions" :disabled="clearingSessions" @click="clearSessions">清空</button>
+            </div>
             <p v-if="loadingSessions" class="muted">会话加载中...</p>
-            <ul v-else class="session-list">
+            <ul v-else class="sessions-list">
               <li
                 v-for="session in sessions"
                 :key="session.id"
-                class="session-item"
+                class="chat-session-item"
                 :class="{ active: activeSessionId === session.id }"
                 @click="openSession(session.id)"
               >
-                <div class="session-item-main">
-                  <div class="session-item-title">{{ session.title || "未命名会话" }}</div>
-                  <div v-if="getSessionSummary(session)" class="session-item-summary">
-                    {{ getSessionSummary(session) }}
-                  </div>
+                <div class="session-content">
+                  <div class="session-title">{{ session.title || "新会话" }}</div>
+                  <div class="session-time">{{ getSessionMetaText(session) }}</div>
                 </div>
                 <button
-                  class="session-delete-btn"
+                  class="btn-delete-session"
                   :disabled="clearingSessions || deletingSessionId === session.id"
+                  title="删除会话"
                   @click.stop="deleteSession(session.id)"
                 >
-                  {{ deletingSessionId === session.id ? "删除中..." : "删除" }}
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <path d="M4.5 4.5L9.5 9.5M9.5 4.5L4.5 9.5"></path>
+                  </svg>
                 </button>
               </li>
             </ul>
@@ -1926,6 +2062,23 @@ onBeforeUnmount(() => {
                   class="markdown-content"
                   v-html="selectedNoteRenderedHtml"
                 ></div>
+                <div v-else-if="shouldRenderPPTSlides" class="ppt-slides-view">
+                  <div class="ppt-slides-toolbar">
+                    <button type="button" class="btn-slide-nav" :disabled="pptPrevDisabled" @click="showPrevPPTSlide">
+                      上一张
+                    </button>
+                    <span class="ppt-slides-indicator">{{ pptSlideIndicator }}</span>
+                    <button type="button" class="btn-slide-nav" :disabled="pptNextDisabled" @click="showNextPPTSlide">
+                      下一张
+                    </button>
+                  </div>
+                  <div class="ppt-slide-image-wrap">
+                    <img :src="currentPPTSlideUrl" :alt="`幻灯片 ${pptSlideIndicator}`" loading="lazy" />
+                  </div>
+                </div>
+                <div v-else-if="selectedNoteInfographImageUrl" class="markdown-content">
+                  <img :src="selectedNoteInfographImageUrl" alt="信息图" loading="lazy" />
+                </div>
                 <div v-else class="markdown-content">
                   <pre>{{ selectedNote.content }}</pre>
                 </div>
@@ -2096,9 +2249,15 @@ onBeforeUnmount(() => {
 
           <div v-else class="chat-panel">
             <div class="chat-messages">
-              <div v-for="msg in messages" :key="msg.id" class="msg" :class="`role-${msg.role}`">
-                <div class="msg-role">{{ msg.role === "user" ? "我" : "助手" }}</div>
-                <div class="msg-content">{{ msg.content }}</div>
+              <div v-if="messages.length === 0" class="chat-welcome">
+                <h3>开始对话</h3>
+                <p>输入问题后，助手会基于当前来源内容给出回答。</p>
+              </div>
+              <div v-for="msg in messages" v-else :key="msg.id" class="chat-message" :data-role="msg.role">
+                <div class="message-avatar">{{ msg.role === "user" ? "我" : "AI" }}</div>
+                <div class="message-content">
+                  <div class="message-text" v-html="renderChatMessageHtml(msg.role, msg.content)"></div>
+                </div>
               </div>
             </div>
             <div class="prompt-scenarios-panel" :class="{ collapsed: promptScenariosCollapsed }">
@@ -2410,6 +2569,23 @@ onBeforeUnmount(() => {
                 class="markdown-content"
                 v-html="selectedNoteRenderedHtml"
               ></div>
+              <div v-else-if="shouldRenderPPTSlides" class="ppt-slides-view">
+                <div class="ppt-slides-toolbar">
+                  <button type="button" class="btn-slide-nav" :disabled="pptPrevDisabled" @click="showPrevPPTSlide">
+                    上一张
+                  </button>
+                  <span class="ppt-slides-indicator">{{ pptSlideIndicator }}</span>
+                  <button type="button" class="btn-slide-nav" :disabled="pptNextDisabled" @click="showNextPPTSlide">
+                    下一张
+                  </button>
+                </div>
+                <div class="ppt-slide-image-wrap">
+                  <img :src="currentPPTSlideUrl" :alt="`幻灯片 ${pptSlideIndicator}`" loading="lazy" />
+                </div>
+              </div>
+              <div v-else-if="selectedNoteInfographImageUrl" class="markdown-content">
+                <img :src="selectedNoteInfographImageUrl" alt="信息图" loading="lazy" />
+              </div>
               <pre v-else>{{ selectedNote.content }}</pre>
             </div>
             <p v-else class="muted">暂无可展示笔记</p>

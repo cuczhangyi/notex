@@ -368,9 +368,9 @@ func (a *Agent) ParsePPTSlides(content string) []Slide {
 		style = content[styleStart+20 : styleEnd]
 	}
 
-	// 2. Split by Slide markers.
-	// We look for "Slide X" or "幻灯片 X" with optional Markdown headers
-	re := regexp.MustCompile(`(?m)^(?:\s*#{1,6}\s*)?(?:Slide|幻灯片|第\d+张幻灯片|##)\s*\d+[:\s]*.*$`)
+	// 2. Split by slide heading markers.
+	// Prefer the strict prompt rule: "【幻灯片】-【编号】", while keeping backward-compatible variants.
+	re := regexp.MustCompile(`(?mi)^\s*(?:#{1,6}\s*)?(?:(?:【\s*幻灯片\s*】\s*[-—]\s*【?\s*(?:\d+|[一二三四五六七八九十百]+)\s*】?)|slide\s*\d+|幻灯片\s*\d+|第\s*\d+\s*张幻灯片|封面幻灯片|封底幻灯片)\s*[:：\-]?\s*.*$`)
 	indices := re.FindAllStringIndex(content, -1)
 
 	if len(indices) > 0 {
@@ -381,34 +381,36 @@ func (a *Agent) ParsePPTSlides(content string) []Slide {
 				end = indices[i+1][0]
 			}
 
-			slideContent := content[start:end]
-			// Validation: Must contain at least one of the section markers
-			lower := strings.ToLower(slideContent)
-			if strings.Contains(lower, "叙事目标") ||
-				strings.Contains(lower, "narrative goal") ||
-				strings.Contains(lower, "关键内容") {
-				slides = append(slides, Slide{
-					Style:   style,
-					Content: slideContent,
-				})
+			slideContent := strings.TrimSpace(content[start:end])
+			if slideContent == "" {
+				continue
 			}
+			slides = append(slides, Slide{
+				Style:   style,
+				Content: slideContent,
+			})
 		}
 	}
 
-	// 3. If still nothing, try splitting by the required // NARRATIVE GOAL / // 叙事目标
+	// 3. If still nothing, try splitting by repeated section markers:
+	// // 叙事目标 / //叙事目标 / // NARRATIVE GOAL
 	if len(slides) == 0 {
-		// Use a more specific marker for splitting if Slide headers are missing
-		marker := "// 叙事目标"
-		if !strings.Contains(content, marker) {
-			marker = "// NARRATIVE GOAL"
-		}
-
-		if strings.Contains(content, marker) {
-			parts := strings.Split(content, marker)
-			for i := 1; i < len(parts); i++ {
+		sectionRe := regexp.MustCompile(`(?mi)^\s*//\s*(?:叙事目标|narrative goal)\s*$`)
+		sectionIdx := sectionRe.FindAllStringIndex(content, -1)
+		if len(sectionIdx) > 1 {
+			for i := 0; i < len(sectionIdx); i++ {
+				start := sectionIdx[i][0]
+				end := len(content)
+				if i+1 < len(sectionIdx) {
+					end = sectionIdx[i+1][0]
+				}
+				block := strings.TrimSpace(content[start:end])
+				if block == "" {
+					continue
+				}
 				slides = append(slides, Slide{
 					Style:   style,
-					Content: marker + parts[i],
+					Content: block,
 				})
 			}
 		}

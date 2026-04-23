@@ -1,5 +1,5 @@
 import { defineStore } from "pinia";
-import { request } from "../api/request";
+import { request, requestSSE } from "../api/request";
 
 export interface NoteItem {
   id: string;
@@ -41,6 +41,7 @@ export const useNoteStore = defineStore("note", {
     loading: false,
     deletingNoteId: "",
     transformingType: "",
+    transformingMessage: "",
     error: "",
     selectedNoteId: "",
   }),
@@ -83,9 +84,12 @@ export const useNoteStore = defineStore("note", {
       options?: TransformOptions,
     ) {
       this.transformingType = type;
+      this.transformingMessage = "正在准备生成任务...";
       this.error = "";
       try {
-        const note = await request<NoteItem>(`/api/notebooks/${notebookId}/transform`, {
+        const note = await requestSSE<NoteItem>(
+          `/api/notebooks/${notebookId}/transform/${encodeURIComponent(type)}`,
+          {
           method: "POST",
           body: JSON.stringify({
             type,
@@ -98,7 +102,20 @@ export const useNoteStore = defineStore("note", {
                 ? options.infographStyleId
                 : undefined,
           }),
-        });
+          onEvent: ({ event, data }) => {
+            if (event !== "progress" || !data || typeof data !== "object") {
+              return;
+            }
+            const payload = data as { message?: unknown; percent?: unknown };
+            const message = typeof payload.message === "string" ? payload.message : "";
+            const percent =
+              typeof payload.percent === "number" && Number.isFinite(payload.percent)
+                ? Math.max(0, Math.min(100, Math.round(payload.percent)))
+                : null;
+            this.transformingMessage = percent === null ? message : `${message} (${percent}%)`;
+          },
+          },
+        );
         this.items = [note, ...this.items];
         this.selectedNoteId = note.id;
         return note;
@@ -108,6 +125,7 @@ export const useNoteStore = defineStore("note", {
         throw err;
       } finally {
         this.transformingType = "";
+        this.transformingMessage = "";
       }
     },
     /**
