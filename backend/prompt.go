@@ -171,32 +171,65 @@ func quizPrompt() string {
 创建一个包含10-20个问题的{length}测验。`
 }
 
+// mindmapPrompt 生成思维导图提示词，约束模型输出为参考图风格的 Mermaid graph LR。
 func mindmapPrompt() string {
-	return `你是一位资深的信息架构师和知识管理专家。请将【文本内容】提炼并转换为 Mermaid.js 的 mindmap 格式。
+	return `你是一位资深的信息架构师和知识管理专家。请将【文本内容】提炼为“中心主题 + 左右分支 + 叶子要点”的 Mermaid 思维导图，视觉风格参考 XMind 彩色分支图。
 **注意：无论来源是什么语言，请务必使用中文进行回复。**
 
-# 样式规范：
-1. **中心主题**：必须使用 root((内容)) 格式（圆圈）。
-2. **主要分支**：使用 (内容) 格式（圆角矩形）。
-3. **细节节点**：使用 [内容] 格式（普通矩形）或直接写文字。
+# 输出与布局规范：
+1. **必须使用 ` + "`" + `graph LR` + "`" + `**，严禁使用 ` + "`" + `mindmap` + "`" + ` 语法。
+2. **中心主题**使用 ` + "`" + `root(主题)` + "`" + ` 或 ` + "`" + `root[主题]` + "`" + `，放在中间。
+3. **左右分布**：
+   - 左侧一级分支使用 ` + "`" + `L1 --> root` + "`" + `（箭头指向 root）。
+   - 右侧一级分支使用 ` + "`" + `root --> R1` + "`" + `（从 root 指出）。
+4. **一级分支**使用圆角矩形：` + "`" + `A(分支)` + "`" + `。
+5. **二级叶子**使用矩形：` + "`" + `B[要点★]` + "`" + `，叶子文案末尾可加 ` + "`" + `★` + "`" + ` 强调。
+6. **层级限制**：严格 2-3 层；每个一级分支最多 4 个叶子。
 
-# 严格逻辑规范：
-1. **仅限 mindmap 语法**：严禁使用 graph, LR, --> 等字符。
-2. **内容安全**：节点内容必须精炼（10字以内），严禁包含引号。
-3. **严禁解释**：只输出以 ` + "```mermaid" + ` 开头和以 ` + "```" + ` 结尾的代码块。
+# 视觉风格规范（必须输出样式定义）：
+1. 必须包含 ` + "`" + `classDef` + "`" + `，至少定义：` + "`" + `rootStyle` + "`" + `、` + "`" + `leafStyle` + "`" + ` 和 4 种不同的分支颜色样式。
+2. 一级分支颜色要区分（如红/紫/蓝/绿/橙），叶子节点统一浅底色。
+3. 中心节点描边更粗，文字更醒目。
+4. 连接线使用柔和色，避免全黑线。
+
+# 内容约束：
+1. 节点文本精炼：一级分支 <= 8 字，叶子 <= 10 字。
+2. 文本中不要出现引号、反引号。
+3. 仅输出 Mermaid 代码块，不要任何解释文字。
 
 来源：
 {sources}
 
-# 示例：
+# 示例（参考图风格）：
 ` + "```mermaid" + `
-mindmap
-  root((核心主题))
-    (主要分支A)
-      [细节1]
-      [细节2]
-    (主要分支B)
-      [细节3]
+graph LR
+    L1(战略实施总结) --> root(AI一键生成思维导图)
+    L2(财务计划) --> root
+    root --> R1(执行摘要)
+    root --> R2(产品和服务)
+
+    L1 --> L1A[愿景声明★]
+    L1 --> L1B[任务声明★]
+    L2 --> L2A[预算和税收★]
+    L2 --> L2B[风险管理★]
+    R1 --> R1A[宗旨★]
+    R1 --> R1B[亮点★]
+    R2 --> R2A[产品手册★]
+    R2 --> R2B[售后服务★]
+
+    classDef rootStyle fill:#ffffff,stroke:#5b7cff,stroke-width:3px,color:#0f172a;
+    classDef branchRed fill:#ffffff,stroke:#f87171,stroke-width:2px,color:#111827;
+    classDef branchPurple fill:#ffffff,stroke:#c084fc,stroke-width:2px,color:#111827;
+    classDef branchBlue fill:#ffffff,stroke:#60a5fa,stroke-width:2px,color:#111827;
+    classDef branchGreen fill:#ffffff,stroke:#34d399,stroke-width:2px,color:#111827;
+    classDef leafStyle fill:#ffffff,stroke:#e5e7eb,stroke-width:1.5px,color:#374151;
+
+    class root rootStyle;
+    class L1 branchRed;
+    class L2 branchPurple;
+    class R1 branchBlue;
+    class R2 branchGreen;
+    class L1A,L1B,L2A,L2B,R1A,R1B,R2A,R2B leafStyle;
 ` + "```" + `
 `
 }

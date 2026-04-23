@@ -22,10 +22,11 @@ type QwenImageClient struct {
 	apiKey     string
 	baseURL    string
 	httpClient *http.Client
+	llm        llms.Model
 }
 
 // NewQwenImageClient creates a new Qwen image client.
-func NewQwenImageClient(apiKey, baseURL string) *QwenImageClient {
+func NewQwenImageClient(apiKey, baseURL string, llm llms.Model) *QwenImageClient {
 	if baseURL == "" {
 		baseURL = "https://dashscope.aliyuncs.com/compatible-mode/v1/images/generations"
 	}
@@ -40,6 +41,7 @@ func NewQwenImageClient(apiKey, baseURL string) *QwenImageClient {
 				IdleConnTimeout:   5 * time.Minute,
 			},
 		},
+		llm: llm,
 	}
 }
 
@@ -173,12 +175,18 @@ func (q *QwenImageClient) GenerateImage(ctx context.Context, model, prompt strin
 	return filePath, nil
 }
 
-// GenerateTextWithModel is not supported for qwen image client.
+// GenerateTextWithModel generates text using injected LLM for compatibility.
 func (q *QwenImageClient) GenerateTextWithModel(ctx context.Context, prompt string, model string) (string, error) {
-	return "", fmt.Errorf("qwen image client does not support text generation")
+	if q.llm == nil {
+		return "", fmt.Errorf("llm is not configured for text generation")
+	}
+	return llms.GenerateFromSinglePrompt(ctx, q.llm, prompt)
 }
 
-// GenerateFromSinglePrompt is not supported for qwen image client.
+// GenerateFromSinglePrompt generates text using injected LLM.
 func (q *QwenImageClient) GenerateFromSinglePrompt(ctx context.Context, llm llms.Model, prompt string, options ...llms.CallOption) (string, error) {
-	return "", fmt.Errorf("qwen image client does not support text generation")
+	if q.llm == nil {
+		return "", fmt.Errorf("llm is not configured for text generation")
+	}
+	return llms.GenerateFromSinglePrompt(ctx, q.llm, prompt, options...)
 }

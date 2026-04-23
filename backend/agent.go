@@ -50,17 +50,17 @@ func NewAgent(cfg Config, vectorStore *VectorStore) (*Agent, error) {
 		if cfg.GLMAPIKey == "" {
 			return nil, fmt.Errorf("glm_api_key is required when image_provider is 'glm'")
 		}
-		provider = NewGLMImageClient(cfg.GLMAPIKey)
+		provider = NewGLMImageClient(cfg.GLMAPIKey, llm)
 	case "zimage":
 		if cfg.ZImageAPIKey == "" {
 			return nil, fmt.Errorf("zimage_api_key is required when image_provider is 'zimage'")
 		}
-		provider = NewZImageClient(cfg.ZImageAPIKey)
+		provider = NewZImageClient(cfg.ZImageAPIKey, llm)
 	case "qwen":
 		if cfg.QwenAPIKey == "" {
 			return nil, fmt.Errorf("qwen_api_key is required when image_provider is 'qwen'")
 		}
-		provider = NewQwenImageClient(cfg.QwenAPIKey, cfg.QwenBaseURL)
+		provider = NewQwenImageClient(cfg.QwenAPIKey, cfg.QwenBaseURL, llm)
 	case "gemini":
 		provider = NewGeminiClient(cfg.GoogleAPIKey, cfg.GeminiBaseURL, llm)
 	default:

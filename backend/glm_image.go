@@ -21,10 +21,11 @@ type GLMImageClient struct {
 	apiKey     string
 	baseURL    string
 	httpClient *http.Client
+	llm        llms.Model
 }
 
 // NewGLMImageClient creates a new GLM image client
-func NewGLMImageClient(apiKey string) *GLMImageClient {
+func NewGLMImageClient(apiKey string, llm llms.Model) *GLMImageClient {
 	return &GLMImageClient{
 		apiKey:  apiKey,
 		baseURL: "https://open.bigmodel.cn/api/paas/v4/images/generations",
@@ -36,6 +37,7 @@ func NewGLMImageClient(apiKey string) *GLMImageClient {
 				IdleConnTimeout:   5 * time.Minute,
 			},
 		},
+		llm: llm,
 	}
 }
 
@@ -164,14 +166,20 @@ func (g *GLMImageClient) GenerateImage(ctx context.Context, model, prompt string
 	return filePath, nil
 }
 
-// GenerateTextWithModel generates text using GLM (optional, for compatibility)
+// GenerateTextWithModel generates text using injected LLM for compatibility.
 func (g *GLMImageClient) GenerateTextWithModel(ctx context.Context, prompt string, model string) (string, error) {
-	return "", fmt.Errorf("GLM-Image client does not support text generation")
+	if g.llm == nil {
+		return "", fmt.Errorf("llm is not configured for text generation")
+	}
+	return llms.GenerateFromSinglePrompt(ctx, g.llm, prompt)
 }
 
-// GenerateFromSinglePrompt generates text (optional, for compatibility)
+// GenerateFromSinglePrompt generates text using injected LLM.
 func (g *GLMImageClient) GenerateFromSinglePrompt(ctx context.Context, llm llms.Model, prompt string, options ...llms.CallOption) (string, error) {
-	return "", fmt.Errorf("GLM-Image client does not support text generation")
+	if g.llm == nil {
+		return "", fmt.Errorf("llm is not configured for text generation")
+	}
+	return llms.GenerateFromSinglePrompt(ctx, g.llm, prompt, options...)
 }
 
 // generateToken generates a JWT token from the API key

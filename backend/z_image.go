@@ -20,10 +20,11 @@ type ZImageClient struct {
 	apiKey     string
 	baseURL    string
 	httpClient *http.Client
+	llm        llms.Model
 }
 
 // NewZImageClient creates a new ZImage client
-func NewZImageClient(apiKey string) *ZImageClient {
+func NewZImageClient(apiKey string, llm llms.Model) *ZImageClient {
 	return &ZImageClient{
 		apiKey:  apiKey,
 		baseURL: "https://dashscope.aliyuncs.com/api/v1/services/aigc/image-generation/generation",
@@ -35,6 +36,7 @@ func NewZImageClient(apiKey string) *ZImageClient {
 				IdleConnTimeout:   5 * time.Minute,
 			},
 		},
+		llm: llm,
 	}
 }
 
@@ -158,12 +160,18 @@ func (z *ZImageClient) GenerateImage(ctx context.Context, model, prompt string, 
 	return filePath, nil
 }
 
-// GenerateTextWithModel generates text using Z-Image (optional, for compatibility)
+// GenerateTextWithModel generates text using injected LLM for compatibility.
 func (z *ZImageClient) GenerateTextWithModel(ctx context.Context, prompt string, model string) (string, error) {
-	return "", fmt.Errorf("Z-Image client does not support text generation")
+	if z.llm == nil {
+		return "", fmt.Errorf("llm is not configured for text generation")
+	}
+	return llms.GenerateFromSinglePrompt(ctx, z.llm, prompt)
 }
 
-// GenerateFromSinglePrompt generates text (optional, for compatibility)
+// GenerateFromSinglePrompt generates text using injected LLM.
 func (z *ZImageClient) GenerateFromSinglePrompt(ctx context.Context, llm llms.Model, prompt string, options ...llms.CallOption) (string, error) {
-	return "", fmt.Errorf("Z-Image client does not support text generation")
+	if z.llm == nil {
+		return "", fmt.Errorf("llm is not configured for text generation")
+	}
+	return llms.GenerateFromSinglePrompt(ctx, z.llm, prompt, options...)
 }

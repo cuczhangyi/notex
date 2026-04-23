@@ -66,12 +66,6 @@ type MermaidLike = {
   render: (id: string, code: string) => Promise<{ svg: string }>;
 };
 
-type MermaidViewportControllerLike = {
-  zoomIn: () => void;
-  zoomOut: () => void;
-  reset: () => void;
-};
-
 declare global {
   interface Window {
     pdfjsLib?: PdfJsLike;
@@ -954,9 +948,17 @@ function renderMarkdownContent(noteType: string, content: string): string {
 function sanitizeMermaidCode(code: string): string {
   let sanitized = code.trim();
 
-  if (sanitized.startsWith("graph")) {
-    sanitized = sanitized.replace(/(\s+)-->(\s+)([^"\s][^-\n>]*\([^)]*\)[^-\n>]*)/g, '$1-->$2"$3"');
-    sanitized = sanitized.replace(/([^"\s][^-\n>]*\([^)]*\)[^-\n>]*)\s+-->/g, '"$1" -->');
+  // Handle graph LR/TB horizontal layouts
+  if (/^graph\s+(LR|TB|RL|BT)\b/i.test(sanitized)) {
+    // Fix arrow connections with parentheses in node labels: A(text) --> B
+    sanitized = sanitized.replace(/(\s+-->)(\s+)([^"'\s][^-\n>]*\([^)]*\)[^-\n>]*)/g, '$1$2"$3"');
+    sanitized = sanitized.replace(/(\s+---)(\s+)([^"'\s][^-\n>]*\([^)]*\)[^-\n>]*)/g, '$1$2"$3"');
+    // Fix parentheses before arrow: text(abc) --> B becomes "text(abc)" -->
+    sanitized = sanitized.replace(/([^"'\s][^-\n>]*\([^)]*\)[^-\n>]*)(\s+-->)(\s+)/g, '"$1"$2$3');
+    sanitized = sanitized.replace(/([^"'\s][^-\n>]*\([^)]*\)[^-\n>]*)(\s+---)(\s+)/g, '"$1"$2$3');
+    // Remove quotes from already-quoted content
+    sanitized = sanitized.replace(/"([^"]*)"/g, '$1');
+    return sanitized;
   }
 
   if (!sanitized.startsWith("mindmap")) {
@@ -1002,7 +1004,7 @@ function sanitizeMermaidCode(code: string): string {
 }
 
 /**
- * 初始化 Mermaid 配置，保持和旧版思维导图风格一致
+ * 初始化 Mermaid 配置
  */
 function ensureMermaidInitialized() {
   if (mermaidInitialized || !window.mermaid) {
@@ -1014,18 +1016,25 @@ function ensureMermaidInitialized() {
     securityLevel: "loose",
     fontFamily: "var(--font-sans)",
     themeVariables: {
-      primaryColor: "#f8fafc",
-      primaryTextColor: "#0f172a",
-      primaryBorderColor: "#818cf8",
-      lineColor: "#94a3b8",
-      secondaryColor: "#eef2ff",
+      primaryColor: "#818cf8",
+      primaryTextColor: "#ffffff",
+      primaryBorderColor: "#6366f1",
+      lineColor: "#a5b4fc",
+      secondaryColor: "#e0e7ff",
       tertiaryColor: "#ffffff",
-      fontSize: "14px",
-      mainBkg: "#f8fafc",
+      fontSize: "13px",
+      mainBkg: "#818cf8",
       nodeBorder: "#818cf8",
-      clusterBkg: "#eef2ff",
-      nodeTextColor: "#0f172a",
-      edgeColor: "#a5b4fc",
+      clusterBkg: "#e0e7ff",
+      nodeTextColor: "#1e293b",
+      edgeColor: "#94a3b8",
+      nodePadding: "10, 15",
+    },
+    flowchart: {
+      useMaxWidth: false,
+      htmlLabels: true,
+      curve: "basis",
+      padding: 15,
     },
     mindmap: {
       useMaxWidth: true,
@@ -1036,231 +1045,78 @@ function ensureMermaidInitialized() {
 }
 
 /**
- * 解析 SVG 数值属性，忽略百分比等不稳定尺寸
+ * 将 Mermaid SVG 包装为 Markdown 风格容器，避免画布化展示
  */
-function parseSvgSize(value: string | null): number {
-  if (!value || value.includes("%")) {
-    return 0;
+function createMermaidMarkdownElement(svg: string) {
+  const MIN_ZOOM = 0.1;
+  const MAX_ZOOM = 1.0;
+  const STEP_ZOOM = 0.1;
+  const DEFAULT_ZOOM = 0.2;
+
+  const container = document.createElement("div");
+  container.className = "mermaid-svg-container";
+  const controls = document.createElement("div");
+  controls.className = "mermaid-zoom-controls";
+  const zoomOutButton = document.createElement("button");
+  zoomOutButton.type = "button";
+  zoomOutButton.className = "mermaid-zoom-btn";
+  zoomOutButton.textContent = "-";
+  zoomOutButton.setAttribute("aria-label", "缩小思维导图");
+  const zoomResetButton = document.createElement("button");
+  zoomResetButton.type = "button";
+  zoomResetButton.className = "mermaid-zoom-btn";
+  zoomResetButton.textContent = "重置";
+  zoomResetButton.setAttribute("aria-label", "重置思维导图缩放");
+  const zoomInButton = document.createElement("button");
+  zoomInButton.type = "button";
+  zoomInButton.className = "mermaid-zoom-btn";
+  zoomInButton.textContent = "+";
+  zoomInButton.setAttribute("aria-label", "放大思维导图");
+  const zoomLabel = document.createElement("span");
+  zoomLabel.className = "mermaid-zoom-label";
+
+  controls.append(zoomOutButton, zoomResetButton, zoomInButton, zoomLabel);
+
+  const viewport = document.createElement("div");
+  viewport.className = "mermaid-svg-viewport";
+  const stage = document.createElement("div");
+  stage.className = "mermaid-svg-stage";
+  stage.innerHTML = svg;
+  viewport.appendChild(stage);
+  container.append(controls, viewport);
+
+  const svgElement = stage.querySelector("svg");
+  if (svgElement instanceof SVGSVGElement) {
+    svgElement.removeAttribute("width");
+    svgElement.removeAttribute("height");
+    svgElement.setAttribute("preserveAspectRatio", "xMidYMid meet");
   }
-  const matched = value.match(/-?\d+(?:\.\d+)?/);
-  return matched ? Number(matched[0]) : 0;
-}
 
-/**
- * 规范 Mermaid 输出的 SVG 尺寸，避免出现 0 宽高导致空白
- */
-function normalizeMermaidSvg(svgElement: SVGSVGElement, renderId: string) {
-  svgElement.id = `${renderId}-svg`;
-
-  const viewBox = svgElement.getAttribute("viewBox");
-  let width = parseSvgSize(svgElement.getAttribute("width"));
-  let height = parseSvgSize(svgElement.getAttribute("height"));
-
-  if (viewBox) {
-    const parts = viewBox
-      .split(/[\s,]+/)
-      .map((item) => Number(item))
-      .filter((item) => Number.isFinite(item));
-    if (parts.length === 4) {
-      width = parts[2] || width;
-      height = parts[3] || height;
-    }
-  }
-
-  if (!viewBox && width > 0 && height > 0) {
-    svgElement.setAttribute("viewBox", `0 0 ${width} ${height}`);
-  }
-
-  const finalWidth = width > 0 ? width : 960;
-  const finalHeight = height > 0 ? height : 560;
-
-  svgElement.removeAttribute("width");
-  svgElement.removeAttribute("height");
-  svgElement.setAttribute("preserveAspectRatio", "xMinYMin meet");
-  svgElement.style.width = `${finalWidth}px`;
-  svgElement.style.height = `${finalHeight}px`;
-  svgElement.style.maxWidth = "none";
-  svgElement.style.minWidth = `${finalWidth}px`;
-  svgElement.style.transformOrigin = "top left";
-  svgElement.style.transform = "scale(1)";
-}
-
-/**
- * 为 Mermaid 思维导图创建缩放与拖拽控制器
- */
-function createMermaidViewportController(
-  canvas: HTMLDivElement,
-  svgElement: SVGSVGElement,
-): MermaidViewportControllerLike {
-  const minScale = 0.6;
-  const maxScale = 2.4;
-  const step = 0.16;
-  let scale = 1;
-  let dragging = false;
-  let pointerId = -1;
-  let startX = 0;
-  let startY = 0;
-  let startScrollLeft = 0;
-  let startScrollTop = 0;
-
-  const applyScale = () => {
-    svgElement.style.transform = `scale(${scale})`;
+  let currentZoom = DEFAULT_ZOOM;
+  const applyZoom = () => {
+    const percent = Math.round(currentZoom * 100);
+    stage.style.width = `${percent}%`;
+    zoomLabel.textContent = `${percent}%`;
+    zoomOutButton.disabled = currentZoom <= MIN_ZOOM;
+    zoomInButton.disabled = currentZoom >= MAX_ZOOM;
+  };
+  const updateZoom = (nextZoom: number) => {
+    currentZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, Number(nextZoom.toFixed(2))));
+    applyZoom();
   };
 
-  const clampScale = (value: number) => {
-    return Math.min(maxScale, Math.max(minScale, Number(value.toFixed(2))));
-  };
-
-  const stopDragging = () => {
-    dragging = false;
-    canvas.classList.remove("dragging");
-    if (pointerId >= 0 && canvas.hasPointerCapture(pointerId)) {
-      canvas.releasePointerCapture(pointerId);
-    }
-    pointerId = -1;
-  };
-
-  canvas.addEventListener("pointerdown", (event) => {
-    if (event.button !== 0) {
-      return;
-    }
-    event.preventDefault();
-    dragging = true;
-    pointerId = event.pointerId;
-    startX = event.clientX;
-    startY = event.clientY;
-    startScrollLeft = canvas.scrollLeft;
-    startScrollTop = canvas.scrollTop;
-    canvas.classList.add("dragging");
-    canvas.setPointerCapture(pointerId);
+  zoomOutButton.addEventListener("click", () => {
+    updateZoom(currentZoom - STEP_ZOOM);
   });
-
-  canvas.addEventListener("pointermove", (event) => {
-    if (!dragging || event.pointerId !== pointerId) {
-      return;
-    }
-    event.preventDefault();
-    canvas.scrollLeft = startScrollLeft - (event.clientX - startX);
-    canvas.scrollTop = startScrollTop - (event.clientY - startY);
+  zoomInButton.addEventListener("click", () => {
+    updateZoom(currentZoom + STEP_ZOOM);
   });
-
-  canvas.addEventListener(
-    "wheel",
-    (event) => {
-      event.preventDefault();
-
-      const previousScale = scale;
-      const nextScale = clampScale(
-        scale + (event.deltaY < 0 ? step : -step),
-      );
-      if (nextScale === previousScale) {
-        return;
-      }
-
-      const rect = canvas.getBoundingClientRect();
-      const anchorX = event.clientX - rect.left + canvas.scrollLeft;
-      const anchorY = event.clientY - rect.top + canvas.scrollTop;
-      const ratio = nextScale / previousScale;
-
-      scale = nextScale;
-      applyScale();
-
-      canvas.scrollLeft = anchorX * ratio - (event.clientX - rect.left);
-      canvas.scrollTop = anchorY * ratio - (event.clientY - rect.top);
-    },
-    { passive: false },
-  );
-
-  canvas.addEventListener("pointerup", stopDragging);
-  canvas.addEventListener("pointercancel", stopDragging);
-  canvas.addEventListener("lostpointercapture", stopDragging);
-  canvas.addEventListener("dragstart", (event) => event.preventDefault());
-
-  applyScale();
-
-  return {
-    zoomIn: () => {
-      scale = clampScale(scale + step);
-      applyScale();
-    },
-    zoomOut: () => {
-      scale = clampScale(scale - step);
-      applyScale();
-    },
-    reset: () => {
-      scale = 1;
-      applyScale();
-      canvas.scrollTo({ left: 0, top: 0, behavior: "smooth" });
-    },
-  };
-}
-
-/**
- * 为 Mermaid 思维导图创建缩放工具栏
- */
-function createMermaidToolbar(controller: MermaidViewportControllerLike) {
-  const toolbar = document.createElement("div");
-  toolbar.className = "mermaid-diagram-toolbar";
-
-  const actions = [
-    {
-      label: "-",
-      title: "缩小",
-      onClick: () => controller.zoomOut(),
-    },
-    {
-      label: "+",
-      title: "放大",
-      onClick: () => controller.zoomIn(),
-    },
-    {
-      label: "1:1",
-      title: "重置",
-      onClick: () => controller.reset(),
-    },
-  ];
-
-  actions.forEach((action) => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "mermaid-toolbar-button";
-    button.textContent = action.label;
-    button.title = action.title;
-    button.setAttribute("aria-label", action.title);
-    button.addEventListener("click", action.onClick);
-    toolbar.appendChild(button);
+  zoomResetButton.addEventListener("click", () => {
+    updateZoom(DEFAULT_ZOOM);
   });
+  applyZoom();
 
-  const hint = document.createElement("span");
-  hint.className = "mermaid-diagram-hint";
-  hint.textContent = "拖动画布，滚轮缩放，点击按钮重置";
-  toolbar.appendChild(hint);
-
-  return toolbar;
-}
-
-/**
- * 包装 Mermaid SVG，并增强为专业脑图交互视图
- */
-function createMermaidDiagramElement(svg: string, renderId: string) {
-  const diagram = document.createElement("div");
-  diagram.className = "mermaid-diagram";
-
-  const canvas = document.createElement("div");
-  canvas.className = "mermaid-diagram-canvas";
-  canvas.innerHTML = svg;
-  diagram.appendChild(canvas);
-
-  const svgElement = canvas.querySelector("svg");
-  if (!(svgElement instanceof SVGSVGElement)) {
-    return diagram;
-  }
-
-  normalizeMermaidSvg(svgElement, renderId);
-  canvas.style.touchAction = "none";
-  const controller = createMermaidViewportController(canvas, svgElement);
-  diagram.prepend(createMermaidToolbar(controller));
-  return diagram;
+  return container;
 }
 
 /**
@@ -1289,13 +1145,13 @@ async function renderMermaidDiagrams(container: HTMLElement | null) {
 
     try {
       const { svg } = await window.mermaid.render(renderId, cleanCode);
-      const diagram = createMermaidDiagramElement(svg, renderId);
-      pre.replaceWith(diagram);
+      const markdownElement = createMermaidMarkdownElement(svg);
+      pre.replaceWith(markdownElement);
     } catch (error) {
       try {
         const { svg } = await window.mermaid.render(`${renderId}-retry`, cleanCode.replace(/\(|\)/g, ""));
-        const diagram = createMermaidDiagramElement(svg, `${renderId}-retry`);
-        pre.replaceWith(diagram);
+        const markdownElement = createMermaidMarkdownElement(svg);
+        pre.replaceWith(markdownElement);
       } catch (retryError) {
         const errorNode = document.createElement("div");
         errorNode.style.color = "red";
